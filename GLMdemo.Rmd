@@ -20,35 +20,54 @@ This parameters reflect Dorothy's toy set up...
 Nuni=100
 Nctx=4
 Uni=rep(1:Nuni,each=Nctx)
-# Variation in total N's... no fewer than 25, but up to 1025
-Nstud=25+round(1000*runif(Nuni*Nctx))
+# Now have systematic variation in Number of students
+Nstud=rep(round(seq(25,1000,len=Nuni)),each=Nctx)
 Context=rep(1:Nctx,Nuni)
 # Will need these for later modelling
 Context.f=factor(Context)
 Uni.f=factor(Uni)
 ```
 
-Now lets create some fake truth... a strong context effect and uni effect
+Now lets create some fake truth... a strong context effect... *no* uni effect, *except* we have a uni-dependent context effect... odd unis are worse at context 4, even unis are better at context r.
 ```{r GroundTruth }
 Logit=function(p)log(p/(1-p))
 InvLogit=function(x)exp(x)/(1+exp(x))
-Succ=InvLogit(rep(Logit(seq(0.3,0.7,len=4)),Nuni)+rep(Logit(seq(0.2,0.8,len=Nuni)),each=Nctx))
-# Adjust 0.3,0.7 to change context effect, 0.2,0.8 to change Uni effect; 
+# Add uni-specific context effect at every 5'th uni
+Succ=InvLogit(rep(Logit(seq(0.3,0.7,len=4)),Nuni)+Logit(rep(c(0.5,0.5,0.5,  0.4  ,0.5,0.5,0.5,  0.6  ),Nuni/2)))
+# Adjust 0.3,0.7 to change context effect, change 0.4 and 0.6 to alter context-4 uni-odd/even effect
 # The more similar the less the effect (e.g. 0.5,0.5 would be no effect)
 
 plot(Uni,Succ,col=1:4,ylim=c(0,1),
       main="True success probabilities",
       xlab="University",ylab="Probability");
 legend(x='topleft',legend=c("Ctx 1","Ctx 2","Ctx 3","Ctx 4"),pch=1,col=1:4)
+
 # One realisation of data...
 Y=rbinom(n=Nuni*Nctx,size = Nstud,prob = Succ)
-```
-Take note of the Context parameters estimates in the Logit of the 'true' effects... leater we'll compare them to the estimates.
-```{r CtxComparison}
-Logit(seq(0.3,0.7,len=4))
+
+plot(Uni,Y/Nstud,col=1:4,ylim=c(0,1),
+      main="Estimated success probabilities",
+      xlab="University",ylab="Probability");
+legend(x='topleft',legend=c("Ctx 1","Ctx 2","Ctx 3","Ctx 4"),pch=1,col=1:4)
+
 ```
 
-Let's see what happens when we fit the wrong model
+So, to be concrete, in probabilities, this is the effect in the data
+```{r CtxComparison}
+Succ[1:4]
+Succ[5:8]
+Succ[8]-Succ[4]
+```
+
+Or, in other words, even unis pass context 4 students at a rate 17 percentage points over odd unis.
+
+Useful also to see this in Logit scale:
+```{r CtxComparisonLog}
+Logit(Succ[1:4])
+Logit(Succ[5:8])
+```
+
+This fixed effects model is now correct, *except* for the odd-even Uni effect on context 4
 
 ## Fixed Effects Model
 ```{r FitGLM}
@@ -60,40 +79,13 @@ These context effects are similar but not so close to the true Logit scale value
 Now let's see about residuals
 ```{r GLM.ResidualAnalysis}
 Res=residuals(mod,type="pearson",scaled=TRUE)
-plot(Uni,Res,col=1:4,
+plot(Nstud,Res,col=1:4,
       main="Residuals - Fixed Effects",
-      xlab="University",ylab="Standardised Residual");
+      xlab="Number students in context/uni",ylab="Standardised Residual");
 legend(x='topleft',legend=c("Ctx 1","Ctx 2","Ctx 3","Ctx 4"),pch=1,col=1:4)
-qqnorm(Res,col=1:4);abline(0,1)
+abline(h=0);abline(h=c(-1.96,1.96),lty=3)
+#qqnorm(Res,col=1:4);abline(0,1)
 ```
 
-Pretty bad... let's see what happens when we model the random effect...
+Having now plotted the Univesities by size (precisely, the number of students per context), we can see that the size of the Z-score is driven not just by the odd-even effect, but sample size in each cell.
 
-## Mixed Model
-```{r FitGLMM}
-mmod  <- glmer(cbind(Y,Nstud-Y) ~ -1 + Context.f + (1 | Uni.f), family="binomial")
-print(mmod)
-```
-See how close these parameter estimates are to the true Logit scale Context effects?
-
-Now let's see about residuals
-```{r GLMM.ResidualAnalysis}
-mRes=residuals(mmod,type="pearson",scaled=TRUE)
-plot(Uni,mRes,col=1:4,
-      main="Residuals - Mixed Model",
-      xlab="University",ylab="Standardised Residual");
-legend(x='topleft',legend=c("Ctx 1","Ctx 2","Ctx 3","Ctx 4"),pch=1,col=1:4)
-qqnorm(mRes,col=1:4);abline(0,1)
-```
-
-So... this shows that a random university effect could possibly bring z-scores into line... but that variance is not gone, it's moved into the random effect, the random intercepts that model university-specific variation.  
-
-We can look at the university-specific residuals:
-```{r BLUPs}
-cV <- ranef(mmod, condVar = TRUE,drop=TRUE)
-ranvar <- attr(cV[[1]], "postVar")
-Z = cV$Uni.f/sqrt(attr(cV$Uni.f,"postVar"))
-qqnorm(Z);abline(0,1)
-```
-
-Now this has crazy-big residuals, up to +/-20, right?  But if you go up above and decrease the magnitude of the random effect, e.g. change the  0.2,0.8 to 0.48,0.52, i.e. practically no university random effect, you'll find these uni-specific residuals are almost exactly variance 1 and behave just like null z-scores.
